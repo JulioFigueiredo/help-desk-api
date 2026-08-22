@@ -33,6 +33,7 @@ async def get_all(
 @router.post("/", response_model=UserResponse, status_code=201)
 async def create_user(
     data: UserCreate,
+    _admin: User = Depends(require_admin),
     service: UserService = Depends(get_user_service),
 ):
     return await service.create_user(data)

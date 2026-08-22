@@ -60,7 +60,15 @@ class AuthService:
                 detail="Invalid or expired refresh token",
             )
 
-        user = await self.repo.get_by_id(int(payload["sub"]))
+        try:
+            user_id = int(payload["sub"])
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired refresh token",
+            ) from None
+
+        user = await self.repo.get_by_id(user_id)
 
         if not user:
             raise HTTPException(
