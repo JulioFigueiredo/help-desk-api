@@ -5,9 +5,7 @@ from app.models.user import User, UserRole
 
 
 @pytest.mark.asyncio
-async def test_get_me_success(
-    client: AsyncClient, customer_user: User, auth_headers
-):
+async def test_get_me_success(client: AsyncClient, customer_user: User, auth_headers):
     response = await client.get("/api/v1/users/me", headers=auth_headers(customer_user))
 
     assert response.status_code == 200
@@ -147,9 +145,7 @@ async def test_get_user_customer_cannot_access_others(
 
 
 @pytest.mark.asyncio
-async def test_get_user_not_found(
-    client: AsyncClient, admin_user: User, auth_headers
-):
+async def test_get_user_not_found(client: AsyncClient, admin_user: User, auth_headers):
     response = await client.get(
         "/api/v1/users/99999",
         headers=auth_headers(admin_user),
@@ -303,4 +299,3 @@ async def test_list_users_pagination(
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
-

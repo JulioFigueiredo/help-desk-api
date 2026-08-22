@@ -10,9 +10,7 @@ from app.services.user_service import UserService
 
 
 @pytest.mark.asyncio
-async def test_auth_service_register_conflict(
-    db_session: AsyncSession, customer_user
-):
+async def test_auth_service_register_conflict(db_session: AsyncSession, customer_user):
     repo = UserRepository(db_session)
     service = AuthService(repo)
 
@@ -65,9 +63,7 @@ async def test_auth_service_refresh_invalid_sub(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_user_service_create_conflict(
-    db_session: AsyncSession, customer_user
-):
+async def test_user_service_create_conflict(db_session: AsyncSession, customer_user):
     repo = UserRepository(db_session)
     service = UserService(repo)
 
@@ -83,9 +79,7 @@ async def test_user_service_create_conflict(
 
 
 @pytest.mark.asyncio
-async def test_user_service_update_same_email(
-    db_session: AsyncSession, customer_user
-):
+async def test_user_service_update_same_email(db_session: AsyncSession, customer_user):
     repo = UserRepository(db_session)
     service = UserService(repo)
 
@@ -99,9 +93,7 @@ async def test_user_service_update_same_email(
 
 
 @pytest.mark.asyncio
-async def test_user_repo_delete_and_get_all(
-    db_session: AsyncSession, user_factory
-):
+async def test_user_repo_delete_and_get_all(db_session: AsyncSession, user_factory):
     repo = UserRepository(db_session)
     u1 = await user_factory(email="u1@test.com")
     u2 = await user_factory(email="u2@test.com")
