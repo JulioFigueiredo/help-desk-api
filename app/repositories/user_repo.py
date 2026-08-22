@@ -25,3 +25,12 @@ class UserRepository:
     async def delete(self, user: User) -> None:
         await self.session.delete(user)
         await self.session.commit()
+
+    async def get_all(self, skip: int = 0, limit: int = 100) -> list[User]:
+        result = await self.session.execute(select(User).offset(skip).limit(limit))
+        return result.scalars().all()
+
+    async def update(self, user: User) -> User:
+        await self.session.commit()
+        await self.session.refresh(user)
+        return user

@@ -885,24 +885,24 @@ Além disso, o README deverá explicar:
 
 ## Milestone 1 — Setup
 
-- [ ] Criar projeto FastAPI
-- [ ] Configurar Poetry/uv
-- [ ] Configurar Ruff
-- [ ] Configurar PostgreSQL
-- [ ] Configurar SQLAlchemy
-- [ ] Configurar Alembic
-- [ ] Configurar Docker
-- [ ] Configurar pytest
+- [x] Criar projeto FastAPI
+- [x] Configurar Poetry/uv
+- [x] Configurar Ruff
+- [x] Configurar PostgreSQL
+- [x] Configurar SQLAlchemy
+- [x] Configurar Alembic
+- [x] Configurar Docker
+- [x] Configurar pytest
 
 ## Milestone 2 — Authentication
 
-- [ ] User model
-- [ ] Register
-- [ ] Login
-- [ ] Password hashing
-- [ ] JWT access token
-- [ ] Refresh token
-- [ ] RBAC
+- [x] User model
+- [x] Register
+- [x] Login
+- [x] Password hashing
+- [x] JWT access token
+- [x] Refresh token
+- [x] RBAC
 
 ## Milestone 3 — Tickets
 
