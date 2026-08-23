@@ -1,17 +1,16 @@
-from sqlalchemy.orm import relationship
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, func
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.enums import TicketPriority, TicketStatus
 
 if TYPE_CHECKING:
-    from app.models.user import User
     from app.models.category import Category
+    from app.models.user import User
 
 
 class Ticket(Base):
