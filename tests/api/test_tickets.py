@@ -2,7 +2,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.models.category import Category
-from app.models.user import User
+from app.models.user import User, UserRole
 
 
 @pytest.mark.asyncio
@@ -390,3 +390,253 @@ async def test_list_tickets_pagination(
     assert page2["page"] == 2
     assert page2["total_pages"] == 2
     assert len(page2["items"]) == 1
+
+
+# --- Assign Ticket Tests ---
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_agent_to_self_success(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    # Customer creates a ticket
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Need help with login",
+            "description": "I cannot login to my customer dashboard.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # Agent assigns ticket to self (empty payload)
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == ticket_id
+    assert data["agent_id"] == agent_user.id
+    assert data["status"] == "IN_PROGRESS"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_admin_to_agent_success(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    admin_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    # Customer creates a ticket
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Database connection drop",
+            "description": "Database connection is dropping intermittently.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # Admin assigns ticket to agent
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": agent_user.id},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == ticket_id
+    assert data["agent_id"] == agent_user.id
+    assert data["status"] == "IN_PROGRESS"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_customer_forbidden(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Customer trying to assign",
+            "description": "Customer should never be allowed to assign tickets.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": agent_user.id},
+        headers=auth_headers(customer_user),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "The user doesn't have enough privileges"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_agent_cannot_assign_to_other_agent(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    user_factory,
+    sample_category: Category,
+    auth_headers,
+):
+    other_agent = await user_factory(
+        email="other_agent@example.com",
+        name="Other Agent",
+        role=UserRole.AGENT,
+    )
+
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Ticket assignment delegation",
+            "description": "Agent cannot reassign to another agent.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # Agent tries to assign to other_agent
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": other_agent.id},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Agents can only attribute tickets for yourself"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_target_agent_not_found(
+    client: AsyncClient,
+    customer_user: User,
+    admin_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Ghost agent ticket",
+            "description": "Assigning to a nonexistent agent ID.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": 99999},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Agent not found"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_target_cannot_be_customer(
+    client: AsyncClient,
+    customer_user: User,
+    admin_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Customer as agent ticket",
+            "description": "Assigning ticket to a customer is forbidden.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": customer_user.id},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Target user must be an agent or admin"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_target_inactive_user(
+    client: AsyncClient,
+    customer_user: User,
+    admin_user: User,
+    user_factory,
+    sample_category: Category,
+    auth_headers,
+):
+    inactive_agent = await user_factory(
+        email="inactive_agent@example.com",
+        name="Inactive Agent",
+        role=UserRole.AGENT,
+        is_active=False,
+    )
+
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Inactive agent ticket",
+            "description": "Assigning ticket to an inactive agent.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": inactive_agent.id},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Cannot assign ticket to an inactive user"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_not_found(
+    client: AsyncClient,
+    admin_user: User,
+    auth_headers,
+):
+    response = await client.post(
+        "/api/v1/tickets/99999/assign",
+        json={},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Ticket not found"
+

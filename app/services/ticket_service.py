@@ -4,16 +4,21 @@ from app.models import Ticket, User
 from app.models.enums import TicketPriority, TicketStatus, UserRole
 from app.repositories.category_repo import CategoryRepository
 from app.repositories.ticket_repo import TicketRepository
+from app.repositories.user_repo import UserRepository
 from app.schemas.pagination import PaginatedResponse
-from app.schemas.ticket import TicketCreate, TicketResponse
+from app.schemas.ticket import TicketAssign, TicketCreate, TicketResponse
 
 
 class TicketService:
     def __init__(
-        self, ticket_repo: TicketRepository, category_repo: CategoryRepository
+        self,
+        ticket_repo: TicketRepository,
+        category_repo: CategoryRepository,
+        user_repo: UserRepository,
     ):
         self.ticket_repo = ticket_repo
         self.category_repo = category_repo
+        self.user_repo = user_repo
 
     async def create_ticket(self, data: TicketCreate, current_user: User) -> Ticket:
         """Create a new ticket ensuring category existence and customer ownership."""
@@ -83,3 +88,68 @@ class TicketService:
             page=page,
             limit=limit,
         )
+
+    async def assign_ticket(
+        self, ticket_id: int, data: TicketAssign, current_user: User
+    ) -> Ticket:
+
+        ticket = await self.ticket_repo.get_by_id(ticket_id)
+
+        if not ticket:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ticket not found",
+            )
+
+        if ticket.status == TicketStatus.CLOSED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Ticket is closed"
+            )
+
+        user_role = current_user.role
+
+        match user_role:
+            case UserRole.AGENT:
+                if data.agent_id and data.agent_id != current_user.id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Agents can only attribute tickets for yourself",
+                    )
+
+                target_agent_id = current_user.id
+
+            case UserRole.ADMIN:
+                target_agent_id = data.agent_id or current_user.id
+
+            case _:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="The user doesn't have enough privileges",
+                )
+
+        target_agent = await self.user_repo.get_by_id(target_agent_id)
+
+        if not target_agent:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Agent not found",
+            )
+
+        if not target_agent.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot assign ticket to an inactive user",
+            )
+
+        if target_agent.role not in [UserRole.AGENT, UserRole.ADMIN]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Target user must be an agent or admin",
+            )
+
+        ticket.agent_id = target_agent_id
+
+        if ticket.status == TicketStatus.OPEN:
+            ticket.status = TicketStatus.IN_PROGRESS
+
+        return await self.ticket_repo.update(ticket)

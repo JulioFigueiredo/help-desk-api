@@ -1,14 +1,20 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies import get_current_active_user
+from app.api.v1.dependencies import get_current_active_user, require_staff
 from app.db.session import get_db
 from app.models import User
 from app.models.enums import TicketPriority, TicketStatus
 from app.repositories.category_repo import CategoryRepository
 from app.repositories.ticket_repo import TicketRepository
+from app.repositories.user_repo import UserRepository
 from app.schemas.pagination import PaginatedResponse
-from app.schemas.ticket import TicketCreate, TicketDetailResponse, TicketResponse
+from app.schemas.ticket import (
+    TicketAssign,
+    TicketCreate,
+    TicketDetailResponse,
+    TicketResponse,
+)
 from app.services.ticket_service import TicketService
 
 router = APIRouter()
@@ -16,7 +22,9 @@ router = APIRouter()
 
 def get_ticket_service(db: AsyncSession = Depends(get_db)) -> TicketService:
     return TicketService(
-        ticket_repo=TicketRepository(db), category_repo=CategoryRepository(db)
+        ticket_repo=TicketRepository(db),
+        category_repo=CategoryRepository(db),
+        user_repo=UserRepository(db),
     )
 
 
@@ -66,3 +74,15 @@ async def get_ticket(
     service: TicketService = Depends(get_ticket_service),
 ):
     return await service.get_ticket(ticket_id, current_user)
+
+
+@router.post(
+    "/{ticket_id}/assign", response_model=TicketResponse, status_code=status.HTTP_200_OK
+)
+async def assign_ticket(
+    ticket_id: int,
+    data: TicketAssign,
+    current_user: User = Depends(require_staff),
+    service: TicketService = Depends(get_ticket_service),
+):
+    return await service.assign_ticket(ticket_id, data, current_user)

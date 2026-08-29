@@ -41,3 +41,7 @@ class TicketDetailResponse(TicketResponse):
     customer: UserResponse
     agent: UserResponse | None = None
     category: CategoryResponse
+
+
+class TicketAssign(BaseModel):
+    agent_id: int | None = Field(default=None, gt=0)
