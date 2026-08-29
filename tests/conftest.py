@@ -13,6 +13,7 @@ from app.api.v1.dependencies import get_db
 from app.core.security import create_access_token, hash_password
 from app.db.base import Base
 from app.main import app
+from app.models.category import Category
 from app.models.user import User, UserRole
 
 
@@ -129,3 +130,23 @@ def auth_headers():
         return {"Authorization": f"Bearer {token}"}
 
     return _auth_headers
+
+
+@pytest.fixture
+def category_factory(db_session: AsyncSession):
+    async def _create_category(
+        name: str = "Technical Support",
+        description: str | None = "Technical issues and bugs",
+    ) -> Category:
+        category = Category(name=name, description=description)
+        db_session.add(category)
+        await db_session.commit()
+        await db_session.refresh(category)
+        return category
+
+    return _create_category
+
+
+@pytest.fixture
+async def sample_category(category_factory) -> Category:
+    return await category_factory()
