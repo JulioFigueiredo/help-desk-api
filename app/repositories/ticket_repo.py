@@ -50,7 +50,7 @@ class TicketRepository:
         Returns:
             A tuple of (tickets_list, total_count).
         """
-        # Declarative filter mapping 
+        # Declarative filter mapping
         filter_map = {
             Ticket.customer_id: customer_id,
             Ticket.agent_id: agent_id,
@@ -59,9 +59,7 @@ class TicketRepository:
             Ticket.priority: priority,
         }
         conditions = [
-            column == value
-            for column, value in filter_map.items()
-            if value is not None
+            column == value for column, value in filter_map.items() if value is not None
         ]
 
         # Total count query using the same filtered conditions
