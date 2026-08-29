@@ -39,9 +39,7 @@ def test_create_access_token_custom_expiry():
     user_id = 1
     role = UserRole.CUSTOMER
     custom_delta = timedelta(minutes=5)
-    token = create_access_token(
-        subject=user_id, role=role, expires_delta=custom_delta
-    )
+    token = create_access_token(subject=user_id, role=role, expires_delta=custom_delta)
 
     payload = decode_token(token)
     assert payload is not None
@@ -109,4 +107,3 @@ def test_utils_hashing():
     hash_val = sha256("test")
     assert isinstance(hash_val, str)
     assert len(hash_val) == 64
-

@@ -906,14 +906,15 @@ Além disso, o README deverá explicar:
 
 ## Milestone 3 — Tickets
 
-- [ ] Ticket model
-- [ ] Category model
-- [ ] Create ticket
-- [ ] Get ticket
-- [ ] List tickets
-- [ ] Pagination
-- [ ] Filters
-- [ ] Sorting
+- [x] Ticket model
+- [x] Category model
+- [x] Create ticket
+- [x] Get ticket
+- [x] List tickets
+- [x] Pagination
+- [x] Filters
+- [x] Sorting
+
 
 ## Milestone 4 — Support workflow
 

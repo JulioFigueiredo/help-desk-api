@@ -196,9 +196,7 @@ async def test_refresh_token_expired(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_refresh_token_inactive_user(
-    client: AsyncClient, inactive_user: User
-):
+async def test_refresh_token_inactive_user(client: AsyncClient, inactive_user: User):
     refresh_token = create_refresh_token(subject=inactive_user.id)
 
     response = await client.post(
