@@ -2,7 +2,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.models.category import Category
-from app.models.user import User
+from app.models.user import User, UserRole
 
 
 @pytest.mark.asyncio
@@ -390,3 +390,688 @@ async def test_list_tickets_pagination(
     assert page2["page"] == 2
     assert page2["total_pages"] == 2
     assert len(page2["items"]) == 1
+
+
+# --- Assign Ticket Tests ---
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_agent_to_self_success(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    # Customer creates a ticket
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Need help with login",
+            "description": "I cannot login to my customer dashboard.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # Agent assigns ticket to self (empty payload)
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == ticket_id
+    assert data["agent_id"] == agent_user.id
+    assert data["status"] == "IN_PROGRESS"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_admin_to_agent_success(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    admin_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    # Customer creates a ticket
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Database connection drop",
+            "description": "Database connection is dropping intermittently.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # Admin assigns ticket to agent
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": agent_user.id},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == ticket_id
+    assert data["agent_id"] == agent_user.id
+    assert data["status"] == "IN_PROGRESS"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_customer_forbidden(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Customer trying to assign",
+            "description": "Customer should never be allowed to assign tickets.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": agent_user.id},
+        headers=auth_headers(customer_user),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "The user doesn't have enough privileges"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_agent_cannot_assign_to_other_agent(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    user_factory,
+    sample_category: Category,
+    auth_headers,
+):
+    other_agent = await user_factory(
+        email="other_agent@example.com",
+        name="Other Agent",
+        role=UserRole.AGENT,
+    )
+
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Ticket assignment delegation",
+            "description": "Agent cannot reassign to another agent.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # Agent tries to assign to other_agent
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": other_agent.id},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Agents can only attribute tickets for yourself"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_target_agent_not_found(
+    client: AsyncClient,
+    customer_user: User,
+    admin_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Ghost agent ticket",
+            "description": "Assigning to a nonexistent agent ID.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": 99999},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Agent not found"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_target_cannot_be_customer(
+    client: AsyncClient,
+    customer_user: User,
+    admin_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Customer as agent ticket",
+            "description": "Assigning ticket to a customer is forbidden.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": customer_user.id},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Target user must be an agent or admin"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_target_inactive_user(
+    client: AsyncClient,
+    customer_user: User,
+    admin_user: User,
+    user_factory,
+    sample_category: Category,
+    auth_headers,
+):
+    inactive_agent = await user_factory(
+        email="inactive_agent@example.com",
+        name="Inactive Agent",
+        role=UserRole.AGENT,
+        is_active=False,
+    )
+
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Inactive agent ticket",
+            "description": "Assigning ticket to an inactive agent.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={"agent_id": inactive_agent.id},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Cannot assign ticket to an inactive user"
+
+
+@pytest.mark.asyncio
+async def test_assign_ticket_not_found(
+    client: AsyncClient,
+    admin_user: User,
+    auth_headers,
+):
+    response = await client.post(
+        "/api/v1/tickets/99999/assign",
+        json={},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Ticket not found"
+
+
+# --- Change Ticket Status Tests ---
+
+
+@pytest.mark.asyncio
+async def test_change_status_full_lifecycle_and_timestamps(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    admin_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    # 1. Customer creates a ticket (starts in OPEN)
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "System slow after release",
+            "description": "The system response time increased noticeably.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # 2. Agent transitions OPEN -> IN_PROGRESS
+    resp1 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["status"] == "IN_PROGRESS"
+    assert resp1.json()["resolved_at"] is None
+    assert resp1.json()["closed_at"] is None
+
+    # 3. Agent transitions IN_PROGRESS -> RESOLVED (sets resolved_at)
+    resp2 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "RESOLVED"},
+        headers=auth_headers(agent_user),
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["status"] == "RESOLVED"
+    assert resp2.json()["resolved_at"] is not None
+    assert resp2.json()["closed_at"] is None
+
+    # 4. Agent reopens ticket RESOLVED -> IN_PROGRESS (clears resolved_at)
+    resp3 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    assert resp3.status_code == 200
+    assert resp3.json()["status"] == "IN_PROGRESS"
+    assert resp3.json()["resolved_at"] is None
+
+    # 5. Agent resolves again IN_PROGRESS -> RESOLVED
+    resp4 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "RESOLVED"},
+        headers=auth_headers(agent_user),
+    )
+    assert resp4.status_code == 200
+    assert resp4.json()["status"] == "RESOLVED"
+    assert resp4.json()["resolved_at"] is not None
+
+    # 6. Admin closes ticket RESOLVED -> CLOSED (sets closed_at)
+    resp5 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "CLOSED"},
+        headers=auth_headers(admin_user),
+    )
+    assert resp5.status_code == 200
+    assert resp5.json()["status"] == "CLOSED"
+    assert resp5.json()["closed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_change_status_invalid_transition_from_open_to_closed(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Direct close attempt",
+            "description": "Tickets cannot jump straight from OPEN to CLOSED.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "CLOSED"},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 400
+    assert "Invalid transition from OPEN to CLOSED" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_change_status_closed_ticket_is_terminal(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    # Create ticket
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Terminal ticket test",
+            "description": "Closed tickets cannot transition to any other status.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # Progress to CLOSED
+    await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "RESOLVED"},
+        headers=auth_headers(agent_user),
+    )
+    await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "CLOSED"},
+        headers=auth_headers(agent_user),
+    )
+
+    # Attempt to reopen from CLOSED to IN_PROGRESS
+    reopen_resp = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    assert reopen_resp.status_code == 400
+    assert (
+        "Invalid transition from CLOSED to IN_PROGRESS" in reopen_resp.json()["detail"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_change_status_same_status_bad_request(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Same status test",
+            "description": "Changing status to identical status should fail.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "OPEN"},
+        headers=auth_headers(agent_user),
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Ticket is already in this status"
+
+
+@pytest.mark.asyncio
+async def test_change_status_customer_forbidden(
+    client: AsyncClient,
+    customer_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Customer status test",
+            "description": "Customer cannot change status of any ticket.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(customer_user),
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "The user doesn't have enough privileges"
+
+
+@pytest.mark.asyncio
+async def test_change_status_not_found(
+    client: AsyncClient,
+    agent_user: User,
+    auth_headers,
+):
+    response = await client.patch(
+        "/api/v1/tickets/99999/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Ticket not found"
+
+
+@pytest.mark.asyncio
+async def test_change_priority_agent_success(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Database connection slow",
+            "description": "Queries are taking more than 10 seconds to execute.",
+            "category_id": sample_category.id,
+            "priority": "MEDIUM",
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/priority",
+        json={"priority": "HIGH"},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == ticket_id
+    assert data["priority"] == "HIGH"
+
+
+@pytest.mark.asyncio
+async def test_change_priority_admin_success(
+    client: AsyncClient,
+    customer_user: User,
+    admin_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Payment gateway downtime",
+            "description": "All checkout requests are failing immediately.",
+            "category_id": sample_category.id,
+            "priority": "LOW",
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/priority",
+        json={"priority": "URGENT"},
+        headers=auth_headers(admin_user),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["priority"] == "URGENT"
+
+
+@pytest.mark.asyncio
+async def test_change_priority_customer_forbidden(
+    client: AsyncClient,
+    customer_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Customer attempts priority escalation",
+            "description": "Customers should not be allowed to change ticket priority.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/priority",
+        json={"priority": "URGENT"},
+        headers=auth_headers(customer_user),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "The user doesn't have enough privileges"
+
+
+@pytest.mark.asyncio
+async def test_change_priority_not_found(
+    client: AsyncClient,
+    agent_user: User,
+    auth_headers,
+):
+    response = await client.patch(
+        "/api/v1/tickets/99999/priority",
+        json={"priority": "HIGH"},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Ticket not found"
+
+
+@pytest.mark.asyncio
+async def test_change_priority_same_priority_bad_request(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Priority same value check",
+            "description": "Changing to identical priority should return bad request.",
+            "category_id": sample_category.id,
+            "priority": "MEDIUM",
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/priority",
+        json={"priority": "MEDIUM"},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Ticket is already in this priority"
+
+
+@pytest.mark.asyncio
+async def test_change_priority_closed_ticket_bad_request(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Closed ticket priority change attempt",
+            "description": "Closed tickets cannot have their priority updated.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # Transition to CLOSED: OPEN -> IN_PROGRESS -> RESOLVED -> CLOSED
+    await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "RESOLVED"},
+        headers=auth_headers(agent_user),
+    )
+    await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "CLOSED"},
+        headers=auth_headers(agent_user),
+    )
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/priority",
+        json={"priority": "HIGH"},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Ticket is closed"
+
+
+@pytest.mark.asyncio
+async def test_change_priority_invalid_value_validation_error(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Invalid priority enum test",
+            "description": "Invalid enum value should fail Pydantic validation.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/priority",
+        json={"priority": "SUPER_URGENT"},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 422
+

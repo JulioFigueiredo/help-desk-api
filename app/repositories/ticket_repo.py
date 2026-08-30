@@ -98,3 +98,9 @@ class TicketRepository:
         tickets = list(result.scalars().all())
 
         return tickets, total
+
+    async def update(self, ticket: Ticket) -> Ticket:
+        await self.session.commit()
+        await self.session.refresh(ticket)
+
+        return ticket
