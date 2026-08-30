@@ -1074,4 +1074,3 @@ async def test_change_priority_invalid_value_validation_error(
     )
 
     assert response.status_code == 422
-
