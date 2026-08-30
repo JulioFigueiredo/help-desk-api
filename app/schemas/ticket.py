@@ -45,3 +45,7 @@ class TicketDetailResponse(TicketResponse):
 
 class TicketAssign(BaseModel):
     agent_id: int | None = Field(default=None, gt=0)
+
+
+class TicketStatusUpdate(BaseModel):
+    status: TicketStatus

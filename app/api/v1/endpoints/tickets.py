@@ -14,6 +14,7 @@ from app.schemas.ticket import (
     TicketCreate,
     TicketDetailResponse,
     TicketResponse,
+    TicketStatusUpdate,
 )
 from app.services.ticket_service import TicketService
 
@@ -86,3 +87,16 @@ async def assign_ticket(
     service: TicketService = Depends(get_ticket_service),
 ):
     return await service.assign_ticket(ticket_id, data, current_user)
+
+
+@router.patch(
+    "/{ticket_id}/status", response_model=TicketResponse, status_code=status.HTTP_200_OK
+)
+async def change_status(
+    ticket_id: int,
+    data: TicketStatusUpdate,
+    current_user: User = Depends(require_staff),
+    service: TicketService = Depends(get_ticket_service),
+):
+
+    return await service.change_status(ticket_id, data, current_user)

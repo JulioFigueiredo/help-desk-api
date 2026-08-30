@@ -640,3 +640,229 @@ async def test_assign_ticket_not_found(
     assert response.status_code == 404
     assert response.json()["detail"] == "Ticket not found"
 
+
+# --- Change Ticket Status Tests ---
+
+
+@pytest.mark.asyncio
+async def test_change_status_full_lifecycle_and_timestamps(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    admin_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    # 1. Customer creates a ticket (starts in OPEN)
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "System slow after release",
+            "description": "The system response time increased noticeably.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # 2. Agent transitions OPEN -> IN_PROGRESS
+    resp1 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["status"] == "IN_PROGRESS"
+    assert resp1.json()["resolved_at"] is None
+    assert resp1.json()["closed_at"] is None
+
+    # 3. Agent transitions IN_PROGRESS -> RESOLVED (sets resolved_at)
+    resp2 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "RESOLVED"},
+        headers=auth_headers(agent_user),
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["status"] == "RESOLVED"
+    assert resp2.json()["resolved_at"] is not None
+    assert resp2.json()["closed_at"] is None
+
+    # 4. Agent reopens ticket RESOLVED -> IN_PROGRESS (clears resolved_at)
+    resp3 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    assert resp3.status_code == 200
+    assert resp3.json()["status"] == "IN_PROGRESS"
+    assert resp3.json()["resolved_at"] is None
+
+    # 5. Agent resolves again IN_PROGRESS -> RESOLVED
+    resp4 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "RESOLVED"},
+        headers=auth_headers(agent_user),
+    )
+    assert resp4.status_code == 200
+    assert resp4.json()["status"] == "RESOLVED"
+    assert resp4.json()["resolved_at"] is not None
+
+    # 6. Admin closes ticket RESOLVED -> CLOSED (sets closed_at)
+    resp5 = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "CLOSED"},
+        headers=auth_headers(admin_user),
+    )
+    assert resp5.status_code == 200
+    assert resp5.json()["status"] == "CLOSED"
+    assert resp5.json()["closed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_change_status_invalid_transition_from_open_to_closed(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Direct close attempt",
+            "description": "Tickets cannot jump straight from OPEN to CLOSED.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "CLOSED"},
+        headers=auth_headers(agent_user),
+    )
+
+    assert response.status_code == 400
+    assert "Invalid transition from OPEN to CLOSED" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_change_status_closed_ticket_is_terminal(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    # Create ticket
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Terminal ticket test",
+            "description": "Closed tickets cannot transition to any other status.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    # Progress to CLOSED
+    await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "RESOLVED"},
+        headers=auth_headers(agent_user),
+    )
+    await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "CLOSED"},
+        headers=auth_headers(agent_user),
+    )
+
+    # Attempt to reopen from CLOSED to IN_PROGRESS
+    reopen_resp = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    assert reopen_resp.status_code == 400
+    assert (
+        "Invalid transition from CLOSED to IN_PROGRESS"
+        in reopen_resp.json()["detail"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_change_status_same_status_bad_request(
+    client: AsyncClient,
+    customer_user: User,
+    agent_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Same status test",
+            "description": "Changing status to identical status should fail.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "OPEN"},
+        headers=auth_headers(agent_user),
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Ticket is already in this status"
+
+
+@pytest.mark.asyncio
+async def test_change_status_customer_forbidden(
+    client: AsyncClient,
+    customer_user: User,
+    sample_category: Category,
+    auth_headers,
+):
+    create_resp = await client.post(
+        "/api/v1/tickets/",
+        json={
+            "title": "Customer status test",
+            "description": "Customer cannot change status of any ticket.",
+            "category_id": sample_category.id,
+        },
+        headers=auth_headers(customer_user),
+    )
+    ticket_id = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/tickets/{ticket_id}/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(customer_user),
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "The user doesn't have enough privileges"
+
+
+@pytest.mark.asyncio
+async def test_change_status_not_found(
+    client: AsyncClient,
+    agent_user: User,
+    auth_headers,
+):
+    response = await client.patch(
+        "/api/v1/tickets/99999/status",
+        json={"status": "IN_PROGRESS"},
+        headers=auth_headers(agent_user),
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Ticket not found"
+

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import HTTPException, status
 
 from app.models import Ticket, User
@@ -6,7 +8,13 @@ from app.repositories.category_repo import CategoryRepository
 from app.repositories.ticket_repo import TicketRepository
 from app.repositories.user_repo import UserRepository
 from app.schemas.pagination import PaginatedResponse
-from app.schemas.ticket import TicketAssign, TicketCreate, TicketResponse
+from app.schemas.ticket import (
+    TicketAssign,
+    TicketCreate,
+    TicketResponse,
+    TicketStatusUpdate,
+)
+from app.services.ticket_state_machine import TicketStateMachine
 
 
 class TicketService:
@@ -19,6 +27,17 @@ class TicketService:
         self.ticket_repo = ticket_repo
         self.category_repo = category_repo
         self.user_repo = user_repo
+
+    async def _get_ticket_or_fail(self, ticket_id: int) -> Ticket:
+        ticket = await self.ticket_repo.get_by_id(ticket_id)
+
+        if not ticket:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ticket not found",
+            )
+
+        return ticket
 
     async def create_ticket(self, data: TicketCreate, current_user: User) -> Ticket:
         """Create a new ticket ensuring category existence and customer ownership."""
@@ -36,13 +55,7 @@ class TicketService:
 
     async def get_ticket(self, ticket_id: int, current_user: User) -> Ticket:
         """Retrieve ticket by ID ensuring RBAC authorization."""
-        ticket = await self.ticket_repo.get_by_id(ticket_id)
-
-        if not ticket:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Ticket not found",
-            )
+        ticket = await self._get_ticket_or_fail(ticket_id)
 
         if (
             current_user.role == UserRole.CUSTOMER
@@ -93,13 +106,7 @@ class TicketService:
         self, ticket_id: int, data: TicketAssign, current_user: User
     ) -> Ticket:
 
-        ticket = await self.ticket_repo.get_by_id(ticket_id)
-
-        if not ticket:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Ticket not found",
-            )
+        ticket = await self._get_ticket_or_fail(ticket_id)
 
         if ticket.status == TicketStatus.CLOSED:
             raise HTTPException(
@@ -151,5 +158,50 @@ class TicketService:
 
         if ticket.status == TicketStatus.OPEN:
             ticket.status = TicketStatus.IN_PROGRESS
+
+        return await self.ticket_repo.update(ticket)
+
+    async def change_status(
+        self, ticket_id: int, data: TicketStatusUpdate, current_user: User
+    ) -> Ticket:
+
+        ticket = await self._get_ticket_or_fail(ticket_id)
+
+        if current_user.role == UserRole.CUSTOMER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="The user doesn't have enough privileges",
+            )
+
+        if data.status == ticket.status:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ticket is already in this status",
+            )
+
+        if not TicketStateMachine.can_transition(ticket.status, data.status):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid transition from {ticket.status} to {data.status}",
+            )
+
+        ticket_status = data.status
+
+        match ticket_status:
+            case TicketStatus.RESOLVED:
+                ticket.resolved_at = datetime.now(UTC)
+
+            case TicketStatus.CLOSED:
+                ticket.closed_at = datetime.now(UTC)
+
+            # reopen ticket
+            case TicketStatus.IN_PROGRESS:
+                if (
+                    data.status == TicketStatus.IN_PROGRESS
+                    and ticket.status == TicketStatus.RESOLVED
+                ):
+                    ticket.resolved_at = None
+
+        ticket.status = data.status
 
         return await self.ticket_repo.update(ticket)
