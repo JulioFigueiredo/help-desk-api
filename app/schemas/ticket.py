@@ -49,3 +49,7 @@ class TicketAssign(BaseModel):
 
 class TicketStatusUpdate(BaseModel):
     status: TicketStatus
+
+
+class TicketPriorityUpdate(BaseModel):
+    priority: TicketPriority

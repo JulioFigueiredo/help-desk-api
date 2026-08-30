@@ -11,6 +11,7 @@ from app.schemas.pagination import PaginatedResponse
 from app.schemas.ticket import (
     TicketAssign,
     TicketCreate,
+    TicketPriorityUpdate,
     TicketResponse,
     TicketStatusUpdate,
 )
@@ -203,5 +204,32 @@ class TicketService:
                     ticket.resolved_at = None
 
         ticket.status = data.status
+
+        return await self.ticket_repo.update(ticket)
+
+    async def change_priority(
+        self, ticket_id: int, data: TicketPriorityUpdate, current_user: User
+    ) -> Ticket:
+
+        ticket = await self._get_ticket_or_fail(ticket_id)
+
+        if current_user.role == UserRole.CUSTOMER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="The user doesn't have enough privileges",
+            )
+
+        if ticket.status == TicketStatus.CLOSED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Ticket is closed"
+            )
+
+        if data.priority == ticket.priority:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ticket is already in this priority",
+            )
+
+        ticket.priority = data.priority
 
         return await self.ticket_repo.update(ticket)
