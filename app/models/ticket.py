@@ -10,6 +10,7 @@ from app.models.enums import TicketPriority, TicketStatus
 
 if TYPE_CHECKING:
     from app.models.category import Category
+    from app.models.message import Message
     from app.models.user import User
 
 
@@ -63,3 +64,6 @@ class Ticket(Base):
     category: Mapped["Category"] = relationship(back_populates="tickets")
     customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
     agent: Mapped["User | None"] = relationship(foreign_keys=[agent_id])
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="ticket", cascade="all, delete-orphan"
+    )

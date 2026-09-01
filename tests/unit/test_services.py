@@ -105,3 +105,30 @@ async def test_user_repo_delete_and_get_all(db_session: AsyncSession, user_facto
     await repo.delete(u1)
     found = await repo.get_by_id(u1.id)
     assert found is None
+
+
+@pytest.mark.asyncio
+async def test_message_service_ticket_not_found(
+    db_session: AsyncSession, customer_user
+):
+    from app.repositories.message_repo import MessageRepository
+    from app.repositories.ticket_repo import TicketRepository
+    from app.schemas.message import MessageCreate
+    from app.services.message_service import MessageService
+
+    service = MessageService(
+        message_repo=MessageRepository(db_session),
+        ticket_repo=TicketRepository(db_session),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_message(
+            ticket_id=99999,
+            data=MessageCreate(content="Testing ticket not found"),
+            current_user=customer_user,
+        )
+    assert exc.value.status_code == 404
+
+    with pytest.raises(HTTPException) as exc:
+        await service.list_messages(ticket_id=99999, current_user=customer_user)
+    assert exc.value.status_code == 404

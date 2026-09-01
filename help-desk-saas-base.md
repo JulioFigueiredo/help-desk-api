@@ -918,12 +918,12 @@ Além disso, o README deverá explicar:
 
 ## Milestone 4 — Support workflow
 
-- [ ] Assign agent
-- [ ] Change status
-- [ ] Change priority
-- [ ] Ticket messages
-- [ ] Permission rules
-- [ ] Business rules
+- [x] Assign agent
+- [x] Change status
+- [x] Change priority
+- [x] Ticket messages
+- [x] Permission rules
+- [x] Business rules
 
 ## Milestone 5 — Quality
 
