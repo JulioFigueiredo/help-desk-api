@@ -15,3 +15,18 @@ async def test_health_check():
         data = response.json()
         assert data["status"] == "ok"
         assert data["version"] == settings.VERSION
+
+
+@pytest.mark.asyncio
+async def test_unhandled_exception_handler():
+    @app.get("/test-unhandled-500")
+    async def trigger_500():
+        raise RuntimeError("Simulated internal server crash")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/test-unhandled-500")
+        assert response.status_code == 500
+        assert response.json() == {"detail": "Internal server error"}
