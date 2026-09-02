@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# Python / Virtual Environment
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Testing & Linters
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode
+.idea
+
+# Documentation & Spec files
+help-desk-saas-base.md
